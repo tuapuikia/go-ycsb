@@ -18,5 +18,5 @@ if [ -z "$REDISURI" ]; then
 ./go-ycsb load redis -p redis.addr="$REDISURI" -P workloads/workloada --threads "$ycsbthread"
 
 # Generate load to database
-./go-ycsb run mongodb -p redis.addr="$REDISURI" -P workloads/workloada --threads "$ycsbthread"
+./go-ycsb run redis -p redis.addr="$REDISURI" -P workloads/workloada --threads "$ycsbthread"
 
