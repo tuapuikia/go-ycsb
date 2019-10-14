@@ -1,10 +1,11 @@
 #!/bin/sh
 
 REDISURI=$1
-THREADNUM=$2
+REDISDB=$2
+THREADNUM=$3
 
-if [ -z "$REDISURI" ]; then
-  echo "Redis host cannot be empty"
+if [ -z "$REDISURI" ] || [ -z "$REDISDB" ]; then
+  echo "Redis host and db cannot be empty"
   exit
   else
     if [ -z "$THREADNUM" ]; then
@@ -15,8 +16,8 @@ if [ -z "$REDISURI" ]; then
   fi
 
 # Load data to database
-./go-ycsb load redis -p redis.addr="$REDISURI" -P workloads/workloada --threads "$ycsbthread"
+./go-ycsb load redis -p redis.addr="$REDISURI" -p redis.db="$REDISDB" -P workloads/workloada --threads "$ycsbthread"
 
 # Generate load to database
-./go-ycsb run redis -p redis.addr="$REDISURI" -P workloads/workloada --threads "$ycsbthread"
+./go-ycsb run redis -p redis.addr="$REDISURI" -p redis.db="$REDISDB" -P workloads/workloada --threads "$ycsbthread"
 
