@@ -22,7 +22,7 @@ RUN GO111MODULE=on go build -o /go-ycsb ./cmd/*
 
 FROM alpine:3.8 
 
-RUN apk add vim redis mongodb-tools mariadb-client
+RUN apk add vim redis mongodb mongodb-tools mariadb-client
 
 COPY --from=0 /go-ycsb /go-ycsb
 COPY --from=0 /usr/local/bin/dumb-init /usr/local/bin/dumb-init
