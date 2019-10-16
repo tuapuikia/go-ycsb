@@ -11,10 +11,9 @@ if [ -z "$MONGOURI" ] || [ -z "$MONGOUSER" ] || [ -z "$MONGOPASS" ] || [ -z "$TH
   echo "Example: ./mongodb-load.sh mongo-sh admin password 10 1000"
   exit
 else
+  # Load data to database
+  ./go-ycsb load mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$THREADNUM"
 
-# Load data to database
-./go-ycsb load mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$THREADNUM"
-
-# Generate load to database
-./go-ycsb run mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$THREADNUM" --target "$TARGETNUM"
-
+  # Generate load to database
+  ./go-ycsb run mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$THREADNUM" --target "$TARGETNUM"
+fi
