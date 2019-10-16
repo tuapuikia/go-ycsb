@@ -4,6 +4,7 @@ MONGOURI=$1
 MONGOUSER=$2
 MONGOPASS=$3
 THREADNUM=$4
+TARGETNUM=$5
 
 if [ -z "$MONGOURI" ] || [ -z "$MONGOUSER" ] || [ -z "$MONGOPASS" ]; then
   echo "Mongo URI, user , pass cannot be empty"
@@ -13,6 +14,11 @@ else
     ycsbthread=10
   else
     ycsbthread="$THREADNUM"
+    if [ -z "$TARGETNUM" ]; then
+      ycsbtarget=10
+    else
+      ycsbtarget="$TARGETNUM"
+    fi
   fi
 fi
 
@@ -21,5 +27,5 @@ fi
 ./go-ycsb load mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$ycsbthread"
 
 # Generate load to database
-./go-ycsb run mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$ycsbthread"
+./go-ycsb run mongodb -p mongodb.uri=mongodb://"$MONGOURI" -p mongodb.username="$MONGOUSER" -p mongodb.password="$MONGOPASS" -p mongodb.namespace=ycsb.ycsb -P workloads/workloada --threads "$ycsbthread" --target "$ycsbtarget"
 
