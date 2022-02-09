@@ -188,7 +188,7 @@ func (c *Client) Run(ctx context.Context) {
 		// finish warming up
 		measurement.EnableWarmUp(false)
 
-		dur := c.p.GetInt64("measurement.interval", 10)
+		dur := c.p.GetInt64(prop.LogInterval, 10)
 		t := time.NewTicker(time.Duration(dur) * time.Second)
 		defer t.Stop()
 
@@ -201,6 +201,11 @@ func (c *Client) Run(ctx context.Context) {
 			}
 		}
 	}()
+
+	if err := c.workload.Init(c.db); err != nil {
+		fmt.Printf("Initialize workload fail: %v\n", err)
+		return
+	}
 
 	for i := 0; i < threadCount; i++ {
 		go func(threadId int) {

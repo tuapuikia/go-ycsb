@@ -10,8 +10,8 @@ go-ycsb is a Go port of [YCSB](https://github.com/brianfrankcooper/YCSB). It ful
 ## Getting Started
 
 ```bash
-git clone https://github.com/pingcap/go-ycsb.git $GOPATH/src/github.com/pingcap/go-ycsb
-cd $GOPATH/src/github.com/pingcap/go-ycsb
+git clone https://github.com/pingcap/go-ycsb.git
+cd go-ycsb
 make
 
 ./bin/go-ycsb
@@ -19,7 +19,8 @@ make
 
 Notice:
 
-+ To use FoundationDB, you must install [client](https://www.foundationdb.org/download/) library at first, now the supported version is 6.0.15.
++ Minimum supported go version is 1.16.
++ To use FoundationDB, you must install [client](https://www.foundationdb.org/download/) library at first, now the supported version is 6.2.11.
 + To use RocksDB, you must follow [INSTALL](https://github.com/facebook/rocksdb/blob/master/INSTALL.md) to install RocksDB at first.
 
 ## Usage 
@@ -77,7 +78,7 @@ Available Commands:
 
 ## Database Configuration
 
-You can pass the database configuraitons through `-p field=value` in the command line directly.
+You can pass the database configurations through `-p field=value` in the command line directly.
 
 Common configurations:
 
@@ -216,6 +217,8 @@ Common configurations:
 |cassandra.cluster|"127.0.0.1:9042"|Cassandra cluster|
 |cassandra.keyspace|"test"|Keyspace|
 |cassandra.connections|2|Number of connections per host|
+|cassandra.username|cassandra|Username|
+|cassandra.password|cassandra|Password|
 
 ### MongoDB
 
@@ -244,7 +247,7 @@ Common configurations:
 |redis.max_retry_backoff|512ms|Maximum backoff between each retry|
 |redis.dial_timeout|5s|Dial timeout for establishing new connection|
 |redis.read_timeout|3s|Timeout for socket reads|
-|redis.write_timeout|3s|Timeout for socker writes|
+|redis.write_timeout|3s|Timeout for socket writes|
 |redis.pool_size|10|Maximum number of socket connections|
 |redis.min_idle_conns|0|Minimum number of idle connections|
 |redis.max_conn_age|0|Connection age at which client closes the connection|

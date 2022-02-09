@@ -15,15 +15,15 @@ package tikv
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"github.com/tikv/client-go/v2/txnkv"
 	"strings"
 
 	"github.com/magiconair/properties"
 	"github.com/pingcap/go-ycsb/pkg/util"
 	"github.com/pingcap/go-ycsb/pkg/ycsb"
-	"github.com/tikv/client-go/config"
-	"github.com/tikv/client-go/txnkv"
-	"github.com/tikv/client-go/txnkv/kv"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 type txnDB struct {
@@ -32,9 +32,9 @@ type txnDB struct {
 	bufPool *util.BufPool
 }
 
-func createTxnDB(p *properties.Properties, conf config.Config) (ycsb.DB, error) {
+func createTxnDB(p *properties.Properties) (ycsb.DB, error) {
 	pdAddr := p.GetString(tikvPD, "127.0.0.1:2379")
-	db, err := txnkv.NewClient(strings.Split(pdAddr, ","), conf)
+	db, err := txnkv.NewClient(strings.Split(pdAddr, ","))
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +62,10 @@ func (db *txnDB) getRowKey(table string, key string) []byte {
 	return util.Slice(fmt.Sprintf("%s:%s", table, key))
 }
 
+func (db *txnDB) ToSqlDB() *sql.DB {
+	return nil
+}
+
 func (db *txnDB) Read(ctx context.Context, table string, key string, fields []string) (map[string][]byte, error) {
 	tx, err := db.db.Begin()
 	if err != nil {
@@ -69,8 +73,8 @@ func (db *txnDB) Read(ctx context.Context, table string, key string, fields []st
 	}
 	defer tx.Rollback()
 
-	row, err := tx.Get(db.getRowKey(table, key))
-	if kv.IsErrNotFound(err) {
+	row, err := tx.Get(ctx, db.getRowKey(table, key))
+	if tikverr.IsErrNotFound(err) {
 		return nil, nil
 	} else if row == nil {
 		return nil, err
@@ -92,8 +96,8 @@ func (db *txnDB) BatchRead(ctx context.Context, table string, keys []string, fie
 
 	rowValues := make([]map[string][]byte, len(keys))
 	for i, key := range keys {
-		value, err := tx.Get(db.getRowKey(table, key))
-		if kv.IsErrNotFound(err) || value == nil {
+		value, err := tx.Get(ctx, db.getRowKey(table, key))
+		if tikverr.IsErrNotFound(err) || value == nil {
 			rowValues[i] = nil
 		} else {
 			rowValues[i], err = db.r.Decode(value, fields)
@@ -158,8 +162,8 @@ func (db *txnDB) Update(ctx context.Context, table string, key string, values ma
 	}
 	defer tx.Rollback()
 
-	row, err := tx.Get(rowKey)
-	if kv.IsErrNotFound(err) {
+	row, err := tx.Get(ctx, rowKey)
+	if tikverr.IsErrNotFound(err) {
 		return nil
 	} else if row == nil {
 		return err

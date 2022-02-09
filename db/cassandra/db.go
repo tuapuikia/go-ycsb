@@ -16,6 +16,7 @@ package cassandra
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -33,7 +34,11 @@ const (
 	cassandraCluster     = "cassandra.cluster"
 	cassandraKeyspace    = "cassandra.keyspace"
 	cassandraConnections = "cassandra.connections"
+	cassandraUsername    = "cassandra.username"
+	cassandraPassword    = "cassandra.password"
 
+	cassandraUsernameDefault    = "cassandra"
+	cassandraPasswordDefault    = "cassandra"
 	cassandraClusterDefault     = "127.0.0.1:9042"
 	cassandraKeyspaceDefault    = "test"
 	cassandraConnectionsDefault = 2 // refer to https://github.com/gocql/gocql/blob/master/cluster.go#L52
@@ -73,6 +78,10 @@ func (c cassandraCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 	cluster.NumConns = p.GetInt(cassandraConnections, cassandraConnectionsDefault)
 	cluster.Timeout = 30 * time.Second
 	cluster.Consistency = gocql.Quorum
+
+	username := p.GetString(cassandraUsername, cassandraUsernameDefault)
+	password := p.GetString(cassandraPassword, cassandraPasswordDefault)
+	cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
 
 	session, err := cluster.CreateSession()
 	if err != nil {
@@ -123,6 +132,10 @@ func (db *cassandraDB) createTable() error {
 
 	err := db.session.Query(buf.String()).Exec()
 	return err
+}
+
+func (db *cassandraDB) ToSqlDB() *sql.DB {
+	return nil
 }
 
 func (db *cassandraDB) Close() error {
