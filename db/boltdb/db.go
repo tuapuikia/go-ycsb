@@ -30,7 +30,6 @@ package boltdb
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 
@@ -110,10 +109,6 @@ func (db *boltDB) Close() error {
 	return db.db.Close()
 }
 
-func (db *boltDB) ToSqlDB() *sql.DB {
-	return nil
-}
-
 func (db *boltDB) InitThread(ctx context.Context, _ int, _ int) context.Context {
 	return ctx
 }
@@ -188,14 +183,16 @@ func (db *boltDB) Update(ctx context.Context, table string, key string, values m
 		}
 
 		buf := db.bufPool.Get()
-		defer db.bufPool.Put(buf)
+		defer func() {
+			db.bufPool.Put(buf)
+		}()
 
-		rowData, err := db.r.Encode(buf.Bytes(), data)
+		buf, err = db.r.Encode(buf, data)
 		if err != nil {
 			return err
 		}
 
-		return bucket.Put([]byte(key), rowData)
+		return bucket.Put([]byte(key), buf)
 	})
 	return err
 }
@@ -208,14 +205,16 @@ func (db *boltDB) Insert(ctx context.Context, table string, key string, values m
 		}
 
 		buf := db.bufPool.Get()
-		defer db.bufPool.Put(buf)
+		defer func() {
+			db.bufPool.Put(buf)
+		}()
 
-		rowData, err := db.r.Encode(buf.Bytes(), values)
+		buf, err = db.r.Encode(buf, values)
 		if err != nil {
 			return err
 		}
 
-		return bucket.Put([]byte(key), rowData)
+		return bucket.Put([]byte(key), buf)
 	})
 	return err
 }

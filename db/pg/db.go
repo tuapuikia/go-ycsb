@@ -130,10 +130,6 @@ func (db *pgDB) createTable() error {
 	return err
 }
 
-func (db *pgDB) ToSqlDB() *sql.DB {
-	return nil
-}
-
 func (db *pgDB) Close() error {
 	if db.db == nil {
 		return nil
@@ -292,8 +288,10 @@ func (db *pgDB) execQuery(ctx context.Context, query string, args ...interface{}
 }
 
 func (db *pgDB) Update(ctx context.Context, table string, key string, values map[string][]byte) error {
-	buf := db.bufPool.Get()
-	defer db.bufPool.Put(buf)
+	buf := bytes.NewBuffer(db.bufPool.Get())
+	defer func() {
+		db.bufPool.Put(buf.Bytes())
+	}()
 
 	buf.WriteString("UPDATE ")
 	buf.WriteString(table)
@@ -324,8 +322,10 @@ func (db *pgDB) Insert(ctx context.Context, table string, key string, values map
 	args := make([]interface{}, 0, 1+len(values))
 	args = append(args, key)
 
-	buf := db.bufPool.Get()
-	defer db.bufPool.Put(buf)
+	buf := bytes.NewBuffer(db.bufPool.Get())
+	defer func() {
+		db.bufPool.Put(buf.Bytes())
+	}()
 
 	buf.WriteString("INSERT INTO ")
 	buf.WriteString(table)

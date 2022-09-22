@@ -14,6 +14,7 @@
 package mysql
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -37,9 +38,12 @@ const (
 	mysqlDBName     = "mysql.db"
 	mysqlForceIndex = "mysql.force_index"
 	// TODO: support batch and auto commit
+
+	tidbClusterIndex = "tidb.cluster_index"
 )
 
 type mysqlCreator struct {
+	name string
 }
 
 type mysqlDB struct {
@@ -91,11 +95,41 @@ func (c mysqlCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 
 	d.bufPool = util.NewBufPool()
 
+	if err := d.createTable(c.name); err != nil {
+		return nil, err
+	}
+
 	return d, nil
 }
 
-func (db *mysqlDB) ToSqlDB() *sql.DB {
-	return db.db
+func (db *mysqlDB) createTable(driverName string) error {
+	tableName := db.p.GetString(prop.TableName, prop.TableNameDefault)
+	if db.p.GetBool(prop.DropData, prop.DropDataDefault) &&
+		!db.p.GetBool(prop.DoTransactions, true) {
+		if _, err := db.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)); err != nil {
+			return err
+		}
+	}
+
+	fieldCount := db.p.GetInt64(prop.FieldCount, prop.FieldCountDefault)
+	fieldLength := db.p.GetInt64(prop.FieldLength, prop.FieldLengthDefault)
+
+	buf := new(bytes.Buffer)
+	s := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (YCSB_KEY VARCHAR(64) PRIMARY KEY", tableName)
+	buf.WriteString(s)
+
+	if driverName == "tidb" && db.p.GetBool(tidbClusterIndex, true) {
+		buf.WriteString(" CLUSTERED")
+	}
+
+	for i := int64(0); i < fieldCount; i++ {
+		buf.WriteString(fmt.Sprintf(", FIELD%d VARCHAR(%d)", i, fieldLength))
+	}
+
+	buf.WriteString(");")
+
+	_, err := db.db.Exec(buf.String())
+	return err
 }
 
 func (db *mysqlDB) Close() error {
@@ -231,20 +265,20 @@ func (db *mysqlDB) BatchRead(ctx context.Context, table string, keys []string, f
 	buf := db.bufPool.Get()
 	defer db.bufPool.Put(buf)
 	if len(fields) == 0 {
-		buf.WriteString(fmt.Sprintf(`SELECT * FROM %s %s WHERE YCSB_KEY IN (`, table, db.forceIndexKeyword))
+		buf = append(buf, fmt.Sprintf(`SELECT * FROM %s %s WHERE YCSB_KEY IN (`, table, db.forceIndexKeyword)...)
 	} else {
-		buf.WriteString(fmt.Sprintf(`SELECT %s FROM %s %s WHERE YCSB_KEY IN (`, strings.Join(fields, ","), table, db.forceIndexKeyword))
+		buf = append(buf, fmt.Sprintf(`SELECT %s FROM %s %s WHERE YCSB_KEY IN (`, strings.Join(fields, ","), table, db.forceIndexKeyword)...)
 	}
 	for i, key := range keys {
-		buf.WriteByte('?')
+		buf = append(buf, '?')
 		if i < len(keys)-1 {
-			buf.WriteByte(',')
+			buf = append(buf, ',')
 		}
 		args = append(args, key)
 	}
-	buf.WriteByte(')')
+	buf = append(buf, ')')
 
-	query := buf.String()
+	query := string(buf[:])
 	rows, err := db.queryRows(ctx, query, len(keys), args...)
 	db.clearCacheIfFailed(ctx, query, err)
 
@@ -287,8 +321,10 @@ func (db *mysqlDB) execQuery(ctx context.Context, query string, args ...interfac
 }
 
 func (db *mysqlDB) Update(ctx context.Context, table string, key string, values map[string][]byte) error {
-	buf := db.bufPool.Get()
-	defer db.bufPool.Put(buf)
+	buf := bytes.NewBuffer(db.bufPool.Get())
+	defer func() {
+		db.bufPool.Put(buf.Bytes())
+	}()
 
 	buf.WriteString("UPDATE ")
 	buf.WriteString(table)
@@ -329,8 +365,10 @@ func (db *mysqlDB) Insert(ctx context.Context, table string, key string, values 
 	args := make([]interface{}, 0, 1+len(values))
 	args = append(args, key)
 
-	buf := db.bufPool.Get()
-	defer db.bufPool.Put(buf)
+	buf := bytes.NewBuffer(db.bufPool.Get())
+	defer func() {
+		db.bufPool.Put(buf.Bytes())
+	}()
 
 	buf.WriteString("INSERT IGNORE INTO ")
 	buf.WriteString(table)
@@ -357,21 +395,21 @@ func (db *mysqlDB) BatchInsert(ctx context.Context, table string, keys []string,
 	args := make([]interface{}, 0, (1+len(values))*len(keys))
 	buf := db.bufPool.Get()
 	defer db.bufPool.Put(buf)
-	buf.WriteString("INSERT IGNORE INTO ")
-	buf.WriteString(table)
-	buf.WriteString(" (YCSB_KEY")
+	buf = append(buf, "INSERT IGNORE INTO "...)
+	buf = append(buf, table...)
+	buf = append(buf, " (YCSB_KEY"...)
 
 	valueString := strings.Builder{}
 	valueString.WriteString("(?")
 	pairs := util.NewFieldPairs(values[0])
 	for _, p := range pairs {
-		buf.WriteString(" ,")
-		buf.WriteString(p.Field)
+		buf = append(buf, " ,"...)
+		buf = append(buf, p.Field...)
 
 		valueString.WriteString(" ,?")
 	}
 	// Example: INSERT IGNORE INTO table ([columns]) VALUES
-	buf.WriteString(") VALUES ")
+	buf = append(buf, ") VALUES "...)
 	// Example: (?, ?, ?, ....)
 	valueString.WriteByte(')')
 	valueStrings := make([]string, 0, len(keys))
@@ -379,7 +417,7 @@ func (db *mysqlDB) BatchInsert(ctx context.Context, table string, keys []string,
 		valueStrings = append(valueStrings, valueString.String())
 	}
 	// Example: INSERT IGNORE INTO table ([columns]) VALUES (?, ?, ?...), (?, ?, ?), ...
-	buf.WriteString(strings.Join(valueStrings, ","))
+	buf = append(buf, strings.Join(valueStrings, ",")...)
 
 	for i, key := range keys {
 		args = append(args, key)
@@ -389,7 +427,7 @@ func (db *mysqlDB) BatchInsert(ctx context.Context, table string, keys []string,
 		}
 	}
 
-	return db.execQuery(ctx, buf.String(), args...)
+	return db.execQuery(ctx, string(buf[:]), args...)
 }
 
 func (db *mysqlDB) Delete(ctx context.Context, table string, key string) error {
@@ -402,17 +440,17 @@ func (db *mysqlDB) BatchDelete(ctx context.Context, table string, keys []string)
 	args := make([]interface{}, 0, len(keys))
 	buf := db.bufPool.Get()
 	defer db.bufPool.Put(buf)
-	buf.WriteString(fmt.Sprintf("DELETE FROM %s WHERE YSCB_KEY IN (", table))
+	buf = append(buf, fmt.Sprintf("DELETE FROM %s WHERE YCSB_KEY IN (", table)...)
 	for i, key := range keys {
-		buf.WriteByte('?')
+		buf = append(buf, '?')
 		if i < len(keys)-1 {
-			buf.WriteByte(',')
+			buf = append(buf, ',')
 		}
 		args = append(args, key)
 	}
-	buf.WriteByte(')')
+	buf = append(buf, ')')
 
-	return db.execQuery(ctx, buf.String(), args...)
+	return db.execQuery(ctx, string(buf[:]), args...)
 }
 
 func (db *mysqlDB) Analyze(ctx context.Context, table string) error {
@@ -421,7 +459,7 @@ func (db *mysqlDB) Analyze(ctx context.Context, table string) error {
 }
 
 func init() {
-	ycsb.RegisterDBCreator("mysql", mysqlCreator{})
-	ycsb.RegisterDBCreator("tidb", mysqlCreator{})
-	ycsb.RegisterDBCreator("mariadb", mysqlCreator{})
+	ycsb.RegisterDBCreator("mysql", mysqlCreator{name: "mysql"})
+	ycsb.RegisterDBCreator("tidb", mysqlCreator{name: "tidb"})
+	ycsb.RegisterDBCreator("mariadb", mysqlCreator{name: "mariadb"})
 }

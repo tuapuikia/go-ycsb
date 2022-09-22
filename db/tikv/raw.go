@@ -15,14 +15,14 @@ package tikv
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
 	"github.com/magiconair/properties"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/go-ycsb/pkg/util"
 	"github.com/pingcap/go-ycsb/pkg/ycsb"
-	"github.com/tikv/client-go/v2/config"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/tikv/client-go/v2/rawkv"
 )
 
@@ -34,7 +34,13 @@ type rawDB struct {
 
 func createRawDB(p *properties.Properties) (ycsb.DB, error) {
 	pdAddr := p.GetString(tikvPD, "127.0.0.1:2379")
-	db, err := rawkv.NewClient(context.Background(), strings.Split(pdAddr, ","), config.Security{})
+	apiVersionStr := strings.ToUpper(p.GetString(tikvAPIVersion, "V1"))
+	apiVersion, ok := kvrpcpb.APIVersion_value[apiVersionStr]
+	if !ok {
+		return nil, errors.Errorf("Invalid tikv apiversion %s.", apiVersionStr)
+	}
+	db, err := rawkv.NewClientWithOpts(context.Background(), strings.Split(pdAddr, ","),
+		rawkv.WithAPIVersion(kvrpcpb.APIVersion(apiVersion)))
 	if err != nil {
 		return nil, err
 	}
@@ -61,10 +67,6 @@ func (db *rawDB) CleanupThread(ctx context.Context) {
 
 func (db *rawDB) getRowKey(table string, key string) []byte {
 	return util.Slice(fmt.Sprintf("%s:%s", table, key))
-}
-
-func (db *rawDB) ToSqlDB() *sql.DB {
-	return nil
 }
 
 func (db *rawDB) Read(ctx context.Context, table string, key string, fields []string) (map[string][]byte, error) {
@@ -153,20 +155,22 @@ func (db *rawDB) BatchUpdate(ctx context.Context, table string, keys []string, v
 		}
 		rawValues = append(rawValues, rawData)
 	}
-	return db.db.BatchPut(ctx, rawKeys, rawValues, nil)
+	return db.db.BatchPut(ctx, rawKeys, rawValues)
 }
 
 func (db *rawDB) Insert(ctx context.Context, table string, key string, values map[string][]byte) error {
 	// Simulate TiDB data
 	buf := db.bufPool.Get()
-	defer db.bufPool.Put(buf)
+	defer func() {
+		db.bufPool.Put(buf)
+	}()
 
-	rowData, err := db.r.Encode(buf.Bytes(), values)
+	buf, err := db.r.Encode(buf, values)
 	if err != nil {
 		return err
 	}
 
-	return db.db.Put(ctx, db.getRowKey(table, key), rowData)
+	return db.db.Put(ctx, db.getRowKey(table, key), buf)
 }
 
 func (db *rawDB) BatchInsert(ctx context.Context, table string, keys []string, values []map[string][]byte) error {
@@ -180,7 +184,7 @@ func (db *rawDB) BatchInsert(ctx context.Context, table string, keys []string, v
 		}
 		rawValues = append(rawValues, rawData)
 	}
-	return db.db.BatchPut(ctx, rawKeys, rawValues, nil)
+	return db.db.BatchPut(ctx, rawKeys, rawValues)
 }
 
 func (db *rawDB) Delete(ctx context.Context, table string, key string) error {
