@@ -35,9 +35,10 @@ type redisClient interface {
 }
 
 type redis struct {
-	client   redisClient
-	mode     string
-	datatype string
+	client     redisClient
+	mode       string
+	datatype   string
+	fieldcount int64
 }
 
 func (r *redis) Close() error {
@@ -108,6 +109,11 @@ func (r *redis) Scan(ctx context.Context, table string, startKey string, count i
 }
 
 func (r *redis) Update(ctx context.Context, table string, key string, values map[string][]byte) (err error) {
+	// check if it's full update. If yes then we can avoid reading the previous value on string datype
+	fullUpdate := false
+	if int64(len(values)) == r.fieldcount {
+		fullUpdate = true
+	}
 	err = nil
 	switch r.datatype {
 	case JSON_DATATYPE:
@@ -138,15 +144,22 @@ func (r *redis) Update(ctx context.Context, table string, key string, values map
 		fallthrough
 	default:
 		{
-			var initialEncodedJson string = ""
-			initialEncodedJson, err = r.client.Get(ctx, getKeyName(table, key)).Result()
-			if err != nil {
-				return
-			}
 			var encodedJson = make([]byte, 0)
-			err, encodedJson = mergeEncodedJsonWithMap(initialEncodedJson, values)
-			if err != nil {
-				return
+			if fullUpdate {
+				encodedJson, err = json.Marshal(values)
+				if err != nil {
+					return err
+				}
+			} else {
+				var initialEncodedJson string = ""
+				initialEncodedJson, err = r.client.Get(ctx, getKeyName(table, key)).Result()
+				if err != nil {
+					return
+				}
+				err, encodedJson = mergeEncodedJsonWithMap(initialEncodedJson, values)
+				if err != nil {
+					return
+				}
 			}
 			return r.client.Set(ctx, getKeyName(table, key), string(encodedJson), 0).Err()
 		}
@@ -214,8 +227,15 @@ func (r redisCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 	mode := p.GetString(redisMode, redisModeDefault)
 	switch mode {
 	case "cluster":
-		rds.client = goredis.NewClusterClient(getOptionsCluster(p))
-
+		clusterClient := goredis.NewClusterClient(getOptionsCluster(p))
+		// ReloadState reloads cluster state. It calls ClusterSlots func
+		// to get cluster slots information.
+		clusterClient.ReloadState(context.Background())
+		err := clusterClient.Ping(context.Background()).Err()
+		if err != nil {
+			return nil, err
+		}
+		rds.client = clusterClient
 		if p.GetBool(prop.DropData, prop.DropDataDefault) {
 			err := rds.client.FlushDB(context.Background()).Err()
 			if err != nil {
@@ -226,7 +246,12 @@ func (r redisCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 		fallthrough
 	default:
 		mode = "single"
-		rds.client = goredis.NewClient(getOptionsSingle(p))
+		singleEndpointClient := goredis.NewClient(getOptionsSingle(p))
+		err := singleEndpointClient.Ping(context.Background()).Err()
+		if err != nil {
+			return nil, err
+		}
+		rds.client = singleEndpointClient
 
 		if p.GetBool(prop.DropData, prop.DropDataDefault) {
 			err := rds.client.FlushDB(context.Background()).Err()
@@ -238,6 +263,7 @@ func (r redisCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 	rds.mode = mode
 	rds.datatype = p.GetString(redisDatatype, redisDatatypeDefault)
 	fmt.Println(fmt.Sprintf("Using the redis datatype: %s", rds.datatype))
+	rds.fieldcount = p.GetInt64(prop.FieldCount, prop.FieldCountDefault)
 
 	return rds, nil
 }
@@ -251,6 +277,7 @@ const (
 	redisNetworkDefault        = "tcp"
 	redisAddr                  = "redis.addr"
 	redisAddrDefault           = "localhost:6379"
+	redisUsername              = "redis.username"
 	redisPassword              = "redis.password"
 	redisDB                    = "redis.db"
 	redisMaxRedirects          = "redis.max_redirects"
@@ -264,11 +291,12 @@ const (
 	redisReadTimeout           = "redis.read_timeout"
 	redisWriteTimeout          = "redis.write_timeout"
 	redisPoolSize              = "redis.pool_size"
+	redisPoolSizeDefault       = 0
 	redisMinIdleConns          = "redis.min_idle_conns"
+	redisMaxIdleConns          = "redis.max_idle_conns"
 	redisMaxConnAge            = "redis.max_conn_age"
 	redisPoolTimeout           = "redis.pool_timeout"
 	redisIdleTimeout           = "redis.idle_timeout"
-	redisIdleCheckFreq         = "redis.idle_check_frequency"
 	redisTLSCA                 = "redis.tls_ca"
 	redisTLSCert               = "redis.tls_cert"
 	redisTLSKey                = "redis.tls_key"
@@ -280,7 +308,7 @@ func parseTLS(p *properties.Properties) *tls.Config {
 	certPath, _ := p.Get(redisTLSCert)
 	keyPath, _ := p.Get(redisTLSKey)
 	insecureSkipVerify := p.GetBool(redisTLSInsecureSkipVerify, false)
-	if certPath != "" && keyPath != "" {
+	if (certPath != "" && keyPath != "") || (caPath != "") {
 		config, err := util.CreateTLSConfig(caPath, certPath, keyPath, insecureSkipVerify)
 		if err == nil {
 			return config
@@ -292,23 +320,39 @@ func parseTLS(p *properties.Properties) *tls.Config {
 
 func getOptionsSingle(p *properties.Properties) *goredis.Options {
 	opts := &goredis.Options{}
-	opts.Network = p.GetString(redisNetwork, redisNetworkDefault)
+
 	opts.Addr = p.GetString(redisAddr, redisAddrDefault)
-	opts.Password, _ = p.Get(redisPassword)
 	opts.DB = p.GetInt(redisDB, 0)
+	opts.Network = p.GetString(redisNetwork, redisNetworkDefault)
+	opts.Username = p.GetString(redisUsername, "")
+	opts.Password, _ = p.Get(redisPassword)
 	opts.MaxRetries = p.GetInt(redisMaxRetries, 0)
 	opts.MinRetryBackoff = p.GetDuration(redisMinRetryBackoff, time.Millisecond*8)
 	opts.MaxRetryBackoff = p.GetDuration(redisMaxRetryBackoff, time.Millisecond*512)
 	opts.DialTimeout = p.GetDuration(redisDialTimeout, time.Second*5)
 	opts.ReadTimeout = p.GetDuration(redisReadTimeout, time.Second*3)
 	opts.WriteTimeout = p.GetDuration(redisWriteTimeout, opts.ReadTimeout)
-	opts.PoolSize = p.GetInt(redisPoolSize, 10)
-	opts.MinIdleConns = p.GetInt(redisMinIdleConns, 0)
-	opts.MaxConnAge = p.GetDuration(redisMaxConnAge, 0)
+	opts.PoolSize = p.GetInt(redisPoolSize, redisPoolSizeDefault)
+	threadCount := p.MustGetInt("threadcount")
+	if opts.PoolSize == 0 {
+		opts.PoolSize = threadCount
+		fmt.Println(fmt.Sprintf("Setting %s=%d (from <threadcount>) given you haven't specified a value.", redisPoolSize, opts.PoolSize))
+	}
+	opts.MinIdleConns = p.GetInt(redisMinIdleConns, opts.PoolSize)
+	opts.MaxIdleConns = p.GetInt(redisMaxIdleConns, opts.PoolSize)
+	// Since go-redis 9.0.0 the MaxConnAge option was Renamed to ConnMaxLifetime
+	// Expired connections may be closed lazily before reuse.
+	// If <= 0, connections are not closed due to a connection's age.
+	opts.ConnMaxLifetime = p.GetDuration(redisMaxConnAge, -1)
+	// Amount of time client waits for connection if all connections
+	// are busy before returning an error.
+	// Default is ReadTimeout + 1 second.
 	opts.PoolTimeout = p.GetDuration(redisPoolTimeout, time.Second+opts.ReadTimeout)
-	opts.IdleTimeout = p.GetDuration(redisIdleTimeout, time.Minute*5)
-	opts.IdleCheckFrequency = p.GetDuration(redisIdleCheckFreq, time.Minute)
-
+	// Since go-redis 9.0.0 the MaxConnAge option was Renamed to ConnMaxLifetime
+	// Expired connections may be closed lazily before reuse.
+	// If d <= 0, connections are not closed due to a connection's idle time.
+	// -1 disables idle timeout check.
+	opts.ConnMaxIdleTime = p.GetDuration(redisIdleTimeout, -1)
 	opts.TLSConfig = parseTLS(p)
 
 	return opts
@@ -323,6 +367,7 @@ func getOptionsCluster(p *properties.Properties) *goredis.ClusterOptions {
 	opts.ReadOnly = p.GetBool(redisReadOnly, false)
 	opts.RouteByLatency = p.GetBool(redisRouteByLatency, false)
 	opts.RouteRandomly = p.GetBool(redisRouteRandomly, false)
+	opts.Username = p.GetString(redisUsername, "")
 	opts.Password, _ = p.Get(redisPassword)
 	opts.MaxRetries = p.GetInt(redisMaxRetries, 0)
 	opts.MinRetryBackoff = p.GetDuration(redisMinRetryBackoff, time.Millisecond*8)
@@ -330,13 +375,27 @@ func getOptionsCluster(p *properties.Properties) *goredis.ClusterOptions {
 	opts.DialTimeout = p.GetDuration(redisDialTimeout, time.Second*5)
 	opts.ReadTimeout = p.GetDuration(redisReadTimeout, time.Second*3)
 	opts.WriteTimeout = p.GetDuration(redisWriteTimeout, opts.ReadTimeout)
-	opts.PoolSize = p.GetInt(redisPoolSize, 10)
-	opts.MinIdleConns = p.GetInt(redisMinIdleConns, 0)
-	opts.MaxConnAge = p.GetDuration(redisMaxConnAge, 0)
+	opts.PoolSize = p.GetInt(redisPoolSize, redisPoolSizeDefault)
+	threadCount := p.MustGetInt("threadcount")
+	if opts.PoolSize == 0 {
+		opts.PoolSize = threadCount
+		fmt.Println(fmt.Sprintf("Setting %s=%d (from <threadcount>) given you haven't specified a value.", redisPoolSize, opts.PoolSize))
+	}
+	opts.MinIdleConns = p.GetInt(redisMinIdleConns, opts.PoolSize)
+	opts.MaxIdleConns = p.GetInt(redisMaxIdleConns, opts.PoolSize)
+	// Since go-redis 9.0.0 the MaxConnAge option was Renamed to ConnMaxLifetime
+	// Expired connections may be closed lazily before reuse.
+	// If <= 0, connections are not closed due to a connection's age.
+	opts.ConnMaxLifetime = p.GetDuration(redisMaxConnAge, -1)
+	// Amount of time client waits for connection if all connections
+	// are busy before returning an error.
+	// Default is ReadTimeout + 1 second.
 	opts.PoolTimeout = p.GetDuration(redisPoolTimeout, time.Second+opts.ReadTimeout)
-	opts.IdleTimeout = p.GetDuration(redisIdleTimeout, time.Minute*5)
-	opts.IdleCheckFrequency = p.GetDuration(redisIdleCheckFreq, time.Minute)
-
+	// Since go-redis 9.0.0 the MaxConnAge option was Renamed to ConnMaxLifetime
+	// Expired connections may be closed lazily before reuse.
+	// If d <= 0, connections are not closed due to a connection's idle time.
+	// -1 disables idle timeout check.
+	opts.ConnMaxIdleTime = p.GetDuration(redisIdleTimeout, -1)
 	opts.TLSConfig = parseTLS(p)
 
 	return opts

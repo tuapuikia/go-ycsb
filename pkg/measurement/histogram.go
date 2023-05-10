@@ -18,9 +18,7 @@ import (
 	"time"
 
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/magiconair/properties"
 	"github.com/pingcap/go-ycsb/pkg/util"
-	"github.com/pingcap/go-ycsb/pkg/ycsb"
 )
 
 type histogram struct {
@@ -37,18 +35,15 @@ const (
 	AVG       = "AVG"
 	MIN       = "MIN"
 	MAX       = "MAX"
+	PER50TH   = "PER50TH"
+	PER90TH   = "PER90TH"
+	PER95TH   = "PER95TH"
 	PER99TH   = "PER99TH"
 	PER999TH  = "PER999TH"
 	PER9999TH = "PER9999TH"
 )
 
-func (h *histogram) Info() ycsb.MeasurementInfo {
-	res := h.getInfo()
-	delete(res, ELAPSED)
-	return newHistogramInfo(res)
-}
-
-func newHistogram(p *properties.Properties) *histogram {
+func newHistogram() *histogram {
 	h := new(histogram)
 	h.startTime = time.Now()
 	h.hist = hdrhistogram.New(1, 24*60*60*1000*1000, 3)
@@ -69,6 +64,9 @@ func (h *histogram) Summary() []string {
 		util.IntToString(res[AVG]),
 		util.IntToString(res[MIN]),
 		util.IntToString(res[MAX]),
+		util.IntToString(res[PER50TH]),
+		util.IntToString(res[PER90TH]),
+		util.IntToString(res[PER95TH]),
 		util.IntToString(res[PER99TH]),
 		util.IntToString(res[PER999TH]),
 		util.IntToString(res[PER9999TH]),
@@ -84,6 +82,9 @@ func (h *histogram) getInfo() map[string]interface{} {
 	bounds := h.boundCounts.Keys()
 	sort.Ints(bounds)
 
+	per50 := h.hist.ValueAtPercentile(50)
+	per90 := h.hist.ValueAtPercentile(90)
+	per95 := h.hist.ValueAtPercentile(95)
 	per99 := h.hist.ValueAtPercentile(99)
 	per999 := h.hist.ValueAtPercentile(99.9)
 	per9999 := h.hist.ValueAtPercentile(99.99)
@@ -97,24 +98,12 @@ func (h *histogram) getInfo() map[string]interface{} {
 	res[AVG] = avg
 	res[MIN] = min
 	res[MAX] = max
+	res[PER50TH] = per50
+	res[PER90TH] = per90
+	res[PER95TH] = per95
 	res[PER99TH] = per99
 	res[PER999TH] = per999
 	res[PER9999TH] = per9999
 
 	return res
-}
-
-type histogramInfo struct {
-	info map[string]interface{}
-}
-
-func newHistogramInfo(info map[string]interface{}) *histogramInfo {
-	return &histogramInfo{info: info}
-}
-
-func (hi *histogramInfo) Get(metricName string) interface{} {
-	if value, ok := hi.info[metricName]; ok {
-		return value
-	}
-	return nil
 }

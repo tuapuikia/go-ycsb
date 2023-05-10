@@ -50,6 +50,8 @@ import (
 	_ "github.com/pingcap/go-ycsb/db/aerospike"
 	// Register Badger database
 	_ "github.com/pingcap/go-ycsb/db/badger"
+	// Register FoundationDB database
+	_ "github.com/pingcap/go-ycsb/db/foundationdb"
 	// Register RocksDB database
 	_ "github.com/pingcap/go-ycsb/db/rocksdb"
 	// Register Spanner database
@@ -72,6 +74,8 @@ import (
 	_ "github.com/pingcap/go-ycsb/db/elasticsearch"
 	// Register etcd
 	_ "github.com/pingcap/go-ycsb/db/etcd"
+	// Register dynamodb
+	_ "github.com/pingcap/go-ycsb/db/dynamodb"
 )
 
 var (
